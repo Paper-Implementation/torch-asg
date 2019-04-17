@@ -92,3 +92,18 @@ There are two options for the loss constructor that warrants further explanation
   
 Compared to Facebook's implementation, we have also omitted scaling based on input/output lengths. If you need it, you
 can do it yourself by using the `None` reduction and scale the individual scores before summing/averaging.
+
+## Requirements
+I have successfully installed the package on the GPU server with the following environment:
+* Hardware: Nvidia Titan V
+* System: Ubuntu 16.04
+* CUDA: CUDA 9.2, cuDNN 7.5
+* Compiler: gcc/g++ 6.5
+* PyTorch 1.0.1
+
+## Error fixed
+I try some other settings while installing the package, and some errors occurs. I list some of the errors I meet during the installation.
+* CUDA 9.0 is NOT supported. It is said that (from the Internet) some bugs exist in CUDA 9.0. I suggest you to update CUDA to at least CUDA 9.2 if you want to use this package.
+* Note that the compiler < gcc 6 is not supported.
+* Use the correct Arch setting in setup.py.
+* Error "undefined symbol: \_ZN3c105ErrorC1ENS_14SourceLocationERKSs": I install PyTorch 1.0.1 with conda, and PyTorch is build with D_GLIBCXX_USE_CXX11_ABI=1. But in cpp_extension tools, the compile flag is set to be D_GLIBCXX_USE_CXX11_ABI=0. This is a bug and it's fixed in the latest version. If the error occurs, please change the setting with D_GLIBCXX_USE_CXX11_ABI=1 in YOUR_ENVIRON_PATH/pythonx.x/site-packages/torch/utils/cpp_extension.py.
