@@ -6,17 +6,9 @@ import torch_asg_native
 
 class FAC(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, transition, inputs, targets, input_lengths, target_lengths, scale_mode):
+    def forward(ctx, transition, inputs, targets, input_lengths, target_lengths):
         batch_input_len, num_batches, num_labels = inputs.shape
         _, batch_output_len = targets.shape
-        if input_lengths is None:
-            input_lengths = torch.LongTensor([batch_input_len] * num_batches)
-        if target_lengths is None:
-            target_lengths = torch.LongTensor([batch_output_len] * num_batches)
-        if batch_output_len > batch_input_len:
-            batch_output_len = batch_input_len
-            targets = targets[:, :batch_output_len]
-            target_lengths = torch.min(target_lengths, other=target_lengths.new_tensor([batch_output_len]))
         results = torch_asg_native.force_aligned_forward(inputs,
                                                          targets,
                                                          transition,
@@ -27,10 +19,6 @@ class FAC(torch.autograd.Function):
                                                          num_labels,
                                                          batch_output_len)
         scores, alpha, beta, path_contrib = results
-        # print('alpha', alpha)
-        # print('beta', beta)
-        # print('path_contrib', path_contrib.permute(2, 1, 3, 0))
-        # print('beta', beta.permute(1, 2, 0))
         ctx.save_for_backward(alpha, beta, path_contrib, targets, input_lengths, target_lengths, transition)
         return scores
 
@@ -48,23 +36,12 @@ class FAC(torch.autograd.Function):
 
 class FCC(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, transition, inputs, targets, input_lengths, target_lengths, scale_mode):
+    def forward(ctx, transition, inputs, targets, input_lengths, target_lengths):
         input_batch_len, num_batches, num_labels = inputs.shape
-        if input_lengths is None:
-            input_lengths = torch.LongTensor([input_batch_len] * num_batches)
         scores, alpha, beta, path_contrib = torch_asg_native.fully_connected_forward(inputs, transition, input_lengths,
                                                                                      input_batch_len, num_batches,
                                                                                      num_labels)
-        # forward_scores, alpha, path_contrib, should_roll = results
         ctx.save_for_backward(alpha, beta, path_contrib)
-        # print('gamma', gamma)
-        # print('grad_input', alpha, beta)
-        # print('path_contrib', path_contrib)
-        # print('path_contrib_s', path_contrib.exp())
-        # print('path_contrib_s', path_contrib.softmax(3))
-        # print('scores', scores)
-        # print('scores from alpha', alpha[-1].logsumexp(1))
-        # print('scores from beta', (beta[0] + inputs[0]).logsumexp(1))
         return scores
 
     @staticmethod
@@ -78,19 +55,78 @@ class FCC(torch.autograd.Function):
         return grad_transition, grad_inputs, None, None, None, None, None
 
 
+class ASGGPUFastForwardOnly(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inputs, outputs, transition, input_lengths, output_lengths):
+        batch_input_len, num_batches, num_labels = inputs.shape
+        _, batch_output_len = outputs.shape
+        return torch_asg_native.fast_asg_gpu_forward_only(inputs, outputs, transition, input_lengths, output_lengths,
+                                                          batch_input_len, num_batches, num_labels, batch_output_len)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return None
+
+
+class ASGGPUFast(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inputs, transition, outputs, input_lengths, output_lengths):
+        batch_input_len, num_batches, num_labels = inputs.shape
+        _, batch_output_len = outputs.shape
+        results = torch_asg_native.fast_asg_gpu_forward(inputs, outputs, transition, input_lengths, output_lengths,
+                                                        batch_input_len, num_batches, num_labels, batch_output_len)
+        full_scores, aligned_scores, full_gamma, aligned_gamma, full_path_contrib, aligned_path_contrib = results
+        ctx.save_for_backward(full_gamma, aligned_gamma,
+                              full_path_contrib, aligned_path_contrib,
+                              outputs, input_lengths, output_lengths)
+        return full_scores, aligned_scores
+
+    @staticmethod
+    def backward(ctx, grad_full, grad_aligned):
+        full_gamma, aligned_gamma, full_path_contrib, aligned_path_contrib, outputs, input_lengths, output_lengths = ctx.saved_tensors
+
+        batch_input_len, num_batches, num_labels = full_gamma.shape
+        _, batch_output_len = outputs.shape
+
+        results = torch_asg_native.fast_asg_gpu_backward(grad_full, grad_aligned,
+                                                         full_gamma, aligned_gamma,
+                                                         full_path_contrib, aligned_path_contrib,
+                                                         outputs, input_lengths, output_lengths,
+                                                         batch_input_len, num_batches, num_labels, batch_output_len)
+        grad_transition, grad_inputs = results
+        return grad_inputs, grad_transition, None, None, None
+
+
 class ASGLoss(nn.Module):
-    def __init__(self, num_labels, scale_mode='none', reduction='mean'):
+    def __init__(self, num_labels, reduction='mean', forward_only=False, gpu_no_stream_impl=False):
         super().__init__()
         self.num_labels = num_labels
-        self.scale_mode = scale_mode  # none, input_size, input_size_sqrt, target_size, target_size_sqrt
         self.reduction = reduction  # mean, sum, none
         self.transition = nn.Parameter(torch.zeros(num_labels, num_labels))
+        self.forward_only = forward_only
+        self.gpu_no_stream_impl = gpu_no_stream_impl
 
     def forward(self, inputs, targets, input_lengths, target_lengths):
-        fac_result = FAC.apply(self.transition, inputs, targets, input_lengths, target_lengths, self.scale_mode)
-        fcc_result = FCC.apply(self.transition, inputs, targets, input_lengths, target_lengths, self.scale_mode)
-        result = fcc_result - fac_result
-        # result = fac_result
+        batch_input_len, num_batches, num_labels = inputs.shape
+        _, batch_output_len = targets.shape
+        if batch_output_len > batch_input_len:
+            batch_output_len = batch_input_len
+            targets = targets[:, :batch_output_len]
+            target_lengths = torch.min(target_lengths, other=target_lengths.new_tensor([batch_output_len]))
+
+        if self.gpu_no_stream_impl or not inputs.is_cuda:
+            # use the "serial" implementation
+            fac_result = FAC.apply(self.transition, inputs, targets, input_lengths, target_lengths)
+            fcc_result = FCC.apply(self.transition, inputs, targets, input_lengths, target_lengths)
+            result = fcc_result - fac_result
+        elif self.forward_only:
+            # use the GPU fast implementation without backward support
+            result = ASGGPUFastForwardOnly.apply(inputs, targets, self.transition, input_lengths, target_lengths)
+        else:
+            # use the fast GPU implementation
+            full_scores, aligned_scores = ASGGPUFast.apply(inputs, self.transition, targets, input_lengths,
+                                                           target_lengths)
+            result = full_scores - aligned_scores
         if self.reduction == 'sum':
             return result.sum()
         elif self.reduction == 'mean':

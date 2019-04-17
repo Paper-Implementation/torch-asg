@@ -6,27 +6,41 @@ try:
 except:
     raise RuntimeError('Please install pytorch>=1 first')
 
-ext_mods = [CppExtension(name='torch_asg_native',
-                         sources=['torch_asg/native/utils.cpp',
-                                  'torch_asg/native/force_aligned_lattice.cpp',
-                                  'torch_asg/native/fully_connected_lattice.cpp',
-                                  'torch_asg/native/extension.cpp'],
-                         # extra_compile_args=['-fopenmp', '-Ofast']
-                         extra_compile_args=['-fopenmp', '-O0', '-g']
-                         )]
+ext_mods = []
 
-# if True or torch.cuda.is_available():
-#     ext_mods.append(CUDAExtension(name='torch_asg_cuda',
-#                                   sources=['torch_asg/native/torch_asg_cuda.cpp',
-#                                            'torch_asg/native/torch_asg_cuda_kernel.cu'],
-#                                   extra_compile_args={
-#                                       'cxx': ['-O2', ],
-#                                       'nvcc': ['--gpu-architecture=sm_70', '-O3', '--use_fast_math',
-#                                                '--expt-extended-lambda',
-#                                                '--expt-relaxed-constexpr',
-#                                                '-I./torch_asg/cub-1.8.0'
-#                                                ],
-#                                   }))
+if torch.cuda.is_available():
+    ext_mods.append(CUDAExtension(name='torch_asg_native',
+                                  sources=['torch_asg/native/utils.cpp',
+                                           'torch_asg/native/force_aligned_lattice.cpp',
+                                           'torch_asg/native/fully_connected_lattice.cpp',
+                                           'torch_asg/native/extension.cpp',
+                                           'torch_asg/native/streamlined_fast_gpu.cpp',
+                                           'torch_asg/native/force_aligned_lattice_kernel.cu'],
+                                  extra_compile_args={
+                                      'cxx': ['-O2',
+                                              '-DTORCH_ASG_SUPPORTS_CUDA',
+                                              '-fopenmp'],
+                                      'nvcc': ['-arch=sm_60',
+                                               '-gencode=arch=compute_60,code=sm_60',
+                                               '-gencode=arch=compute_61,code=sm_61',
+                                               '-gencode=arch=compute_70,code=sm_70',
+                                               '-gencode=arch=compute_75,code=sm_75',
+                                               '-gencode=arch=compute_75,code=compute_75',
+                                               '-O3',
+                                               '--use_fast_math',
+                                               '--expt-extended-lambda',
+                                               '--expt-relaxed-constexpr'
+                                               ],
+                                  }))
+else:
+    ext_mods.append(CppExtension(name='torch_asg_native',
+                                 sources=['torch_asg/native/utils.cpp',
+                                          'torch_asg/native/force_aligned_lattice.cpp',
+                                          'torch_asg/native/fully_connected_lattice.cpp',
+                                          'torch_asg/native/extension.cpp'],
+                                 extra_compile_args=['-fopenmp', '-Ofast']
+                                 # extra_compile_args=['-fopenmp', '-O0', '-g']
+                                 ))
 
 setup(
     name='torch_asg',

@@ -1,18 +1,14 @@
 //
-// Created by amade on 4/2/2019.
+// Created by amade on 4/5/2019.
 //
 
-#ifndef TORCH_ASG_FORCE_ALIGNED_LATTICE_GPU_H
-#define TORCH_ASG_FORCE_ALIGNED_LATTICE_GPU_H
+#ifndef TORCH_ASG_FORCE_ALIGNED_LATTICE_KERNEL_H
+#define TORCH_ASG_FORCE_ALIGNED_LATTICE_KERNEL_H
 
-#ifdef TORCH_ASG_SUPPORTS_CUDA
-
-#include "force_aligned_lattice_kernel.h"
-
-#else
-
+#include <cuda_runtime.h>
 
 namespace torch_asg {
+
 
 template<typename scalar_t>
 at::Tensor
@@ -23,10 +19,9 @@ make_aligned_inputs_gpu(
         at::Tensor &output_lengths,
         int64_t batch_input_len,
         int64_t num_batches,
-        int64_t batch_output_len
-) {
-    throw std::runtime_error("Not compiled with CUDA support");
-}
+        int64_t batch_output_len,
+        cudaStream_t stream = nullptr
+);
 
 template<typename scalar_t>
 at::Tensor
@@ -36,10 +31,9 @@ make_aligned_transition_gpu(
         at::Tensor &input_lengths,
         at::Tensor &output_lengths,
         int64_t num_batches,
-        int64_t batch_output_len
-) {
-    throw std::runtime_error("Not compiled with CUDA support");
-}
+        int64_t batch_output_len,
+        cudaStream_t stream = nullptr
+);
 
 template<typename scalar_t>
 void collect_transition_grad_gpu(
@@ -48,10 +42,9 @@ void collect_transition_grad_gpu(
         at::Tensor &outputs,
         at::Tensor &output_lengths,
         int64_t num_batches,
-        int64_t num_labels
-) {
-    throw std::runtime_error("Not compiled with CUDA support");
-}
+        int64_t num_labels,
+        cudaStream_t stream = nullptr
+);
 
 template<typename scalar_t>
 void collect_input_grad_gpu(
@@ -62,13 +55,10 @@ void collect_input_grad_gpu(
         at::Tensor &output_lengths,
         int64_t batch_input_len,
         int64_t num_batches,
-        int64_t num_labels
-) {
-    throw std::runtime_error("Not compiled with CUDA support");
-}
+        int64_t num_labels,
+        cudaStream_t stream = nullptr
+);
 
 }
 
-#endif
-
-#endif //TORCH_ASG_FORCE_ALIGNED_LATTICE_GPU_H
+#endif //TORCH_ASG_FORCE_ALIGNED_LATTICE_KERNEL_H

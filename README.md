@@ -12,14 +12,23 @@ potential of playing better with
 Unfortunately, Facebook's implementation in its official 
 [wav2letter++](https://github.com/facebookresearch/wav2letter) project is based on the ArrayFire C++ framework, which 
 makes experimentation rather difficult. Hence we have ported the ASG implementation in wav2letter++ to pytorch as
-C++ extensions. For the CPU implementation we have stayed quite close to the original implementation, whereas for the
-GPU we have taken a lot of leeway while ensuring that the results tally with the CPU's.
+C++ extensions.
+
+Our implementation should produce the same result as Facebook's, but the implementation is **completely different**.
+For example, in their implementation after doing an alpha recursion during the forward pass, they just brute force the
+back-propagation during the backward pass, whereas we do a proper alpha-beta recursion during the forward pass, and
+during the backward pass there is no recursion at all. Our implementation has the benefit of much higher parallelism 
+potential. Another difference is that we try to use pytorch's native
+functions as much as possible, whereas Facebook's implementation is basically a gigantic hand-written C code working
+on raw arrays.
+
+In the [doc](doc) folder, you can find the [maths derivation](doc/tech_report.pdf) of our implementation.
 
 ## Project status
 
 * [x] CPU (openmp) implementation
-* [ ] GPU (cuda) implementation
-* [ ] extensive testing
+* [x] GPU (cuda) implementation
+* [x] testing
 * [ ] performance tuning and comparison
 * [ ] Viterbi decoders 
 * [ ] generalization to better integrate with general WFSTs decoders
@@ -33,7 +42,8 @@ cd torch_asg
 pip install .
 ```
 
-Tested with python 3.7.1. You need to have suitable C++ toolchain installed. Status on Windows is unclear.
+Tested with python 3.7.1. You need to have suitable C++ toolchain installed. For GPU, you need to have an nVidia card
+with compute capability >= 6.
 
 Then in your python code:
 
@@ -49,7 +59,8 @@ def test_run():
     target_batch_len = 5
     asg_loss = ASGLoss(num_labels=num_labels,
                        reduction='mean',  # mean (default), sum, none
-                       scale_mode='none'  # none (default), input_size, input_size_sqrt, target_size, target_size_sqrt
+                       gpu_no_stream_impl=False, # see below for explanation
+                       forward_only=False # see below for explanation                      
                        )
     for i in range(1):
         # Note that inputs follows the CTC convention so that the batch dimension is 1 instead of 0,
@@ -70,4 +81,14 @@ def test_run():
 test_run()
 ```
 
-Hope this repo can help with your research.
+There are two options for the loss constructor that warrants further explanation:
+
+* `gpu_no_stream_impl`: by default, if you are using GPU, we are using an implementation that is highly concurrent by
+  doing some rather complicated CUDA streams manipulation. You can turn this concurrent implementation off by setting
+  this parameter to true, and then CUDA kernel launches are serial. Useful for debugging.
+* `forward_only`: by default, our implementation does quite a lot of work during the forward pass concurrently that is
+  only useful for calculating the gradients. If you don't need the gradient, setting this parameter to true will give
+  a further speed boost.
+  
+Compared to Facebook's implementation, we have also omitted scaling based on input/output lengths. If you need it, you
+can do it yourself by using the `None` reduction and scale the individual scores before summing/averaging.
