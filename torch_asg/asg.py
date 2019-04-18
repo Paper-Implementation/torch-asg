@@ -106,9 +106,16 @@ class ASGLoss(nn.Module):
         self.forward_only = forward_only
         self.gpu_no_stream_impl = gpu_no_stream_impl
 
-    def forward(self, inputs, targets, input_lengths, target_lengths):
+    def forward(self, inputs, targets, input_lengths=None, target_lengths=None):
         batch_input_len, num_batches, num_labels = inputs.shape
         _, batch_output_len = targets.shape
+
+        if target_lengths is None:
+            target_lengths = targets.new_tensor([batch_output_len] * num_batches)
+
+        if input_lengths is None:
+            input_lengths = target_lengths.new_tensor([batch_input_len] * num_batches)
+
         if batch_output_len > batch_input_len:
             batch_output_len = batch_input_len
             targets = targets[:, :batch_output_len]
@@ -119,7 +126,7 @@ class ASGLoss(nn.Module):
             fac_result = FAC.apply(self.transition, inputs, targets, input_lengths, target_lengths)
             fcc_result = FCC.apply(self.transition, inputs, targets, input_lengths, target_lengths)
             result = fcc_result - fac_result
-        elif self.forward_only:
+        elif self.forward_only or not self.training:
             # use the GPU fast implementation without backward support
             result = ASGGPUFastForwardOnly.apply(inputs, targets, self.transition, input_lengths, target_lengths)
         else:
